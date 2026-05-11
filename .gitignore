@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 运行日志
+*.log
+
+# 用户配置（保留config.example.json作为模板）
+config.json
+
+# 临时文件
+temp_*.md
+temp_*.docx
+
+# 输入输出目录
+待处理文件/
+已处理文件/
+
+# 测试缓存
+.pytest_cache/
+
+# 编辑器中二进制文件（Word文档放到 LFS 或 releases）
+*.docx
+!templates/黄金模板.docx

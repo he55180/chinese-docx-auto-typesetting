@@ -1,0 +1,6 @@
+{
+  "source": "待处理文件/source.docx",
+  "output": "已处理文件/source_标准排版.docx",
+  "add_pagenum": true,
+  "log_file": "run.log"
+}
