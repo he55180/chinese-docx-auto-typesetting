@@ -47,12 +47,15 @@ MARGIN_BOTTOM = Mm(35)
 MARGIN_LEFT = Mm(28)
 MARGIN_RIGHT = Mm(26)
 
-FONT_MAIN_TITLE = '方正小标宋简体'
-FONT_CHAPTER = '方正小标宋简体'
-FONT_SECTION = '黑体'
-FONT_HEADING_1 = '黑体'
-FONT_HEADING_2 = '楷体'
-FONT_BODY = '仿宋_GB2312'
+import platform as _platform
+_IS_LINUX = _platform.system() == 'Linux'
+
+FONT_MAIN_TITLE = 'WenQuanYi Zen Hei' if _IS_LINUX else '方正小标宋简体'
+FONT_CHAPTER   = 'WenQuanYi Zen Hei' if _IS_LINUX else '方正小标宋简体'
+FONT_SECTION   = 'Noto Sans CJK SC'   if _IS_LINUX else '黑体'
+FONT_HEADING_1 = 'Noto Sans CJK SC'   if _IS_LINUX else '黑体'
+FONT_HEADING_2 = 'Noto Sans CJK SC'   if _IS_LINUX else '楷体'
+FONT_BODY      = 'Noto Sans CJK SC'   if _IS_LINUX else '仿宋_GB2312'
 
 SIZE_MAIN_TITLE = Pt(22)
 SIZE_CHAPTER = Pt(16)
@@ -88,16 +91,19 @@ HEADING_PATTERNS = {
     'level1_shi': re.compile(r'^[一二三四五六七八九十]+是'),
     'level2':  re.compile(r'^（[一二三四五六七八九十]+）'),
     'level3':  re.compile(r'^\d+[.．、]'),
+    'level4':  re.compile(r'^\(\d+\)'),   # v1.1.0 A1新增：(1) 格式四级标题
 }
 
 HEADING_STYLES = {
-    'chapter':    {'font': FONT_CHAPTER, 'size': Pt(22), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.CENTER},
-    'section':    {'font': FONT_SECTION, 'size': Pt(16), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.LEFT},
+    'chapter':    {'font': FONT_CHAPTER,   'size': Pt(22), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.CENTER},
+    'section':    {'font': FONT_SECTION,   'size': Pt(16), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.LEFT},
     'level1':     {'font': FONT_HEADING_1, 'size': Pt(16), 'bold': True,  'align': WD_ALIGN_PARAGRAPH.LEFT},
     'level1_shi': {'font': FONT_HEADING_1, 'size': Pt(18), 'bold': True,  'align': WD_ALIGN_PARAGRAPH.LEFT},
     'level2':     {'font': FONT_HEADING_2, 'size': Pt(16), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.LEFT},
     'level3':     {'font': FONT_HEADING_1, 'size': Pt(18), 'bold': True,  'align': WD_ALIGN_PARAGRAPH.LEFT},
     'level2_auto':{'font': FONT_HEADING_2, 'size': Pt(16), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.LEFT},
+    'level4':     {'font': FONT_BODY,      'size': Pt(16), 'bold': False, 'align': WD_ALIGN_PARAGRAPH.LEFT},
+    # v1.1.0 A1新增：level4 对应规范 3号仿宋体，内容分行排列
 }
 
 NEVER_BOLD_STYLES = {'FirstParagraph', '2', 'Normal', 'Body Text',
@@ -119,7 +125,7 @@ def is_main_title(para_text, is_first_para):
         return False
     if any(kw in text for kw in MAIN_TITLE_KEYWORDS):
         return True
-    return True
+    return False  # v1.1.0 A2修复：仅命中关键词才判定为主标题，防止称呼语等误判
 
 # ===== 无编号标题智能识别 =====
 MEETING_META_KEYWORDS = ['会议时间', '会议地点', '主持人', '记录人', '出席', '列席', '参会人员',
@@ -379,7 +385,7 @@ class DocumentFormatter:
         clean_text = strip_numbering(p_text)
 
         # 统一截断规则：除章/节外，所有标题按第一个标点拆分（前加粗，后正文）
-        split_types = {'level1', 'level1_shi', 'level2', 'level2_auto', 'level3'}
+        split_types = {'level1', 'level1_shi', 'level2', 'level2_auto', 'level3', 'level4'}  # v1.1.0 A1新增level4
         if p_type in split_types:
             bold_part, normal_part = split_at_first_punct(clean_text, is_heading=True)
             if add_prefix:
@@ -524,7 +530,8 @@ class DocumentFormatter:
             'chapter': '章标题', 'section': '节标题',
             'level1': '一级标题', 'level1_shi': '一是标题',
             'level2': '二级标题', 'level2_auto': '二级标题-自动',
-            'level3': '三级标题', 'main_title': '大标题', 'image': '跳过',
+            'level3': '三级标题', 'level4': '四级标题',  # v1.1.0 A1新增
+            'main_title': '大标题', 'image': '跳过',
             'compact': '紧凑段落',
         }
 
@@ -569,8 +576,8 @@ class DocumentFormatter:
 
             except Exception as e:
                 results['failed'] += 1
-                results['errors'].append(f"第{i+1}段: {str(e)[:80]}")
-                self.logger.warning(f"  [跳过] 段落{i+1}处理失败: {e}")
+                results['errors'].append(f"第{idx+1}段('{item['text'][:15]}'): {str(e)[:80]}")  # v1.1.0 B1修复：i→idx
+                self.logger.warning(f"  [跳过] 段落{idx+1}('{item['text'][:15]}')处理失败: {e}")
 
         self._format_tables(doc)
 

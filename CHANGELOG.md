@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.0 (2026-05-21)
+
+- [修复] A2: is_main_title() 末尾 return True 逻辑漏洞，防止称呼语等误判为主标题
+- [修复] B1: format() 异常捕获中变量名错误（i → idx），并附加段落文本前15字定位信息
+- [新增] A1: 新增第四级标题 (1) 识别支持，完整覆盖 GB/T 9704-2012 四级体系
+- [优化] B2: 流水线执行完毕后自动清理 temp_escaped.md / temp_raw.docx 中间临时文件
+
 ## v1.0.0
 
 - 合并 V5.0 与 V5.1 代码库，统一为 `format_expert.py`

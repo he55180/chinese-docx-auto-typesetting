@@ -70,3 +70,12 @@ run_step("Python Formatting",
          [python_exe, script_format, config_file_dynamic])
 
 print(f"\nAll steps completed successfully. Output: {file_final}")
+
+# ---- v1.1.0 B2: 清理中间临时文件 ----
+for _tmp in [file_escaped, file_raw]:
+    try:
+        if os.path.exists(_tmp):
+            os.remove(_tmp)
+            print(f"Cleaned up temp file: {_tmp}")
+    except Exception as _e:
+        print(f"[WARN] Could not remove temp file {_tmp}: {_e}")

@@ -9,6 +9,7 @@ __pycache__/
 
 # 用户配置（保留config.example.json作为模板）
 config.json
+config_dynamic.json
 
 # 临时文件
 temp_*.md
