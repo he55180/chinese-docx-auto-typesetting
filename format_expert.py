@@ -6,7 +6,7 @@ HSE公文自动化排版系统
       编号层级重置、图片/表格保护
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.3"
 
 import re
 import os
@@ -109,6 +109,141 @@ HEADING_STYLES = {
 NEVER_BOLD_STYLES = {'FirstParagraph', '2', 'Normal', 'Body Text',
                      '正文', 'BodyText', 'Body'}
 
+# ===== 标点符号修正模块（v2.0.0 新增） =====
+
+# 全半角标点映射表
+PUNCT_MAP = {
+    # 引号
+    '"': '\u201c',   # 左双引号
+    '"': '\u201d',   # 右双引号
+    "'": '\u2018',   # 左单引号
+    "'": '\u2019',   # 右单引号
+    # 括号
+    '(': '\uff08',   # 全角左括号
+    ')': '\uff09',   # 全角右括号
+    # 标点
+    ',': '\uff0c',   # 全角逗号
+    ';': '\uff1b',   # 全角分号
+    ':': '\uff1a',   # 全角冒号
+    '!': '\uff01',   # 全角感叹号
+    '?': '\uff1f',   # 全角问号
+}
+
+# 不替换的安全上下文：英文字母/数字前后的标点保留半角
+import unicodedata
+
+def _is_cjk(char):
+    """判断是否为中文字符"""
+    try:
+        return unicodedata.name(char).startswith('CJK')
+    except ValueError:
+        return False
+
+def fix_punctuation_in_text(text):
+    """
+    对单段文本执行标点修正。
+    规则：仅当标点两侧至少一侧是中文字符或文本端点时，才替换为全角。
+    英文句子内部的标点（两侧均为英文/数字）保留半角，避免误伤代码和英文。
+    """
+    if not text:
+        return text
+    result = list(text)
+    length = len(text)
+    for i, ch in enumerate(text):
+        if ch not in PUNCT_MAP:
+            continue
+        left = text[i-1] if i > 0 else None
+        right = text[i+1] if i < length - 1 else None
+        left_is_en = left and (left.isascii() and (left.isalnum() or left in '._-'))
+        right_is_en = right and (right.isascii() and (right.isalnum() or right in '._-'))
+        # 两侧都是英文/数字：不替换（保护英文句子和代码）
+        if left_is_en and right_is_en:
+            continue
+        result[i] = PUNCT_MAP[ch]
+    return ''.join(result)
+
+def fix_punctuation(doc):
+    """
+    遍历文档所有段落和表格单元格，对每个 run 的文本执行标点修正。
+    跳过：纯英文段落、代码块（等宽字体段落）。
+    """
+    fixed_count = 0
+    for para in doc.paragraphs:
+        # 跳过纯英文段落（段落文本中中文字符占比低于 10%）
+        full_text = para.text
+        if not full_text.strip():
+            continue
+        cjk_ratio = sum(1 for c in full_text if _is_cjk(c)) / len(full_text)
+        if cjk_ratio < 0.1:
+            continue
+        for run in para.runs:
+            original = run.text
+            fixed = fix_punctuation_in_text(original)
+            if fixed != original:
+                run.text = fixed
+                fixed_count += 1
+    # 同步处理表格单元格
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        original = run.text
+                        fixed = fix_punctuation_in_text(original)
+                        if fixed != original:
+                            run.text = fixed
+                            fixed_count += 1
+    return fixed_count
+
+# ===== 格式深度清洗模块（v2.0.0 新增） =====
+
+from docx.shared import RGBColor
+
+# 允许保留的字体颜色（黑色系），其余一律清除
+_ALLOWED_COLORS = {None, RGBColor(0, 0, 0), RGBColor(0x1F, 0x1F, 0x1F)}
+
+def clean_dirty_format(doc):
+    """
+    深度清洗文档格式残留：
+    1. 清除段落首尾多余空格
+    2. 清除非黑色字体颜色（颜色标注等）
+    3. 清除正文段落的非必要下划线、斜体
+    4. 不处理表格内容（保留表格原始样式）
+    """
+    cleaned_count = 0
+    BODY_STYLE_NAMES = {'Normal', 'Body Text', '正文', 'BodyText', 'Body', 'FirstParagraph', '2'}
+
+    for para in doc.paragraphs:
+        # 1. 清除首尾空格
+        for run in para.runs:
+            if run.text != run.text.strip():
+                # 只清除纯空格的 run，避免破坏首行缩进等
+                if run.text.strip() == '':
+                    run.text = ''
+                cleaned_count += 1
+
+        # 2 & 3. 仅对正文段落清洗颜色/下划线/斜体
+        style_name = para.style.name if para.style else ''
+        is_body = style_name in BODY_STYLE_NAMES or get_paragraph_type(para.text.strip()) == 'body'
+        if not is_body:
+            continue
+
+        for run in para.runs:
+            # 清除非黑色字体颜色
+            if run.font.color.rgb not in _ALLOWED_COLORS:
+                run.font.color.rgb = RGBColor(0, 0, 0)
+                cleaned_count += 1
+            # 清除下划线（公文正文不应有下划线）
+            if run.font.underline:
+                run.font.underline = False
+                cleaned_count += 1
+            # 清除斜体（公文正文不应有斜体）
+            if run.font.italic:
+                run.font.italic = False
+                cleaned_count += 1
+
+    return cleaned_count
+
 # ===== 主标题智能识别 =====
 MAIN_TITLE_KEYWORDS = ['关于', '通知', '规定', '办法', '方案', '报告', '意见', '请示']
 
@@ -165,6 +300,18 @@ def is_likely_heading(text):
         return False
     if ('，' in stripped or '；' in stripped) and len(stripped) > 12:
         return False
+
+    # 排除包含"/"的机构联合名称（如"A机构/B机构"）
+    if '/' in stripped or '／' in stripped:
+        return False
+
+    # 排除含有"项目""中心""公司""机构""组织""单位"
+    # 且字数超过8字的机构名称行（主标题前的发文机关）
+    ORG_SUFFIXES = ('项目', '中心', '公司', '机构', '组织',
+                    '单位', '部门', '办公室', '委员会', '工程')
+    if len(stripped) > 8 and any(stripped.endswith(s) for s in ORG_SUFFIXES):
+        return False
+
     return True
 
 # ===== 数字标题上下文判断 =====
@@ -174,15 +321,38 @@ def is_level3_heading(text, prev_style, next_style):
     """数字小标题判断：需同时满足以数字+点开头，且上下文不是纯正文环境"""
     if not re.match(r'^\d+[\.、．]\s', text):
         return False
+    if len(text.strip()) > 40:          # v2.0.1 字数超40视为正文列表，不做标题
+        return False
     if prev_style in BODY_STYLES and next_style in BODY_STYLES:
         return False
     return True
 
+def is_organ_line(text, is_first_or_second_para):
+    """
+    识别主标题前的发文机关行。
+    特征：文档前两段、字数<=40、
+    以机构后缀结尾或含'/'联合机构分隔符。
+    """
+    if not is_first_or_second_para:
+        return False
+    stripped = text.strip()
+    if len(stripped) > 40:
+        return False
+    ORG_SUFFIXES = ('项目', '中心', '公司', '机构', '组织',
+                    '单位', '部门', '办公室', '委员会', '工程',
+                    '集团', '局', '处', '队', '所')
+    has_slash = '/' in stripped or '／' in stripped
+    has_suffix = any(stripped.endswith(s) for s in ORG_SUFFIXES)
+    return has_slash or has_suffix
+
 # ===== 标题识别（按优先级从高到低） =====
-def get_paragraph_type(text):
+def get_paragraph_type(text, is_first_or_second_para=False):
     stripped = text.strip()
     if not stripped:
         return 'empty'
+
+    if is_organ_line(stripped, is_first_or_second_para):
+        return 'organ'
 
     for ptype, pattern in HEADING_PATTERNS.items():
         if pattern.match(stripped):
@@ -341,6 +511,18 @@ class DocumentFormatter:
             para.paragraph_format.line_spacing = LINE_SPACING_FIXED
             para.paragraph_format.first_line_indent = Pt(0)
             return 'main_title', p_text[:30]
+
+        # 发文机关 (organ) v2.0.3 新增 - 仿宋 14pt，左对齐，无缩进，不加编号
+        if p_type == 'organ':
+            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+            para.paragraph_format.line_spacing = LINE_SPACING_FIXED
+            pPr = para._element.get_or_add_pPr()
+            self._remove_numpr(pPr)
+            self._set_indent(pPr, first_line=0)
+            run = para.add_run(p_text)
+            self._apply_font_and_bold(run, FONT_BODY, size_pt=Pt(14), bold=False)
+            return 'organ', p_text[:30]
 
         # compact：降级的数字列表项，冒号前加粗，其余正文
         if p_type == 'compact':
@@ -537,14 +719,29 @@ class DocumentFormatter:
 
         # 第一遍：收集段落信息（含样式名用于上下文判断）
         para_items = []
+        is_first_para = True
+        in_main_title = False
+        non_empty_para_count = 0
         for i, para in enumerate(doc.paragraphs):
             p_text = para.text.strip()
             if not p_text:
                 continue
-            p_type = get_paragraph_type(p_text)
+            is_first_or_second_para = (non_empty_para_count < 2)
+            p_type = get_paragraph_type(p_text, is_first_or_second_para)
+            
+            # 多行主标题识别逻辑
             if is_main_title(p_text, is_first_para):
                 p_type = 'main_title'
                 is_first_para = False
+                in_main_title = True
+            elif in_main_title:
+                is_heading = p_type in HEADING_PATTERNS
+                if (not is_heading) and (not p_text.endswith(('：', ':'))) and (len(p_text) <= 50) and (not re.search(r'〔\d{4}〕|\d{4}年\d+号', p_text)):
+                    p_type = 'main_title'
+                else:
+                    in_main_title = False
+            
+            non_empty_para_count += 1
             para_style = para.style.name if para.style else ''
             para_items.append({'para': para, 'text': p_text, 'type': p_type, 'style': para_style, 'index': i})
 
@@ -613,6 +810,16 @@ def main():
     parser.add_argument('-o', '--output', default=None, help='输出路径（默认：输入文件名_formatted.docx）')
     parser.add_argument('-c', '--config', default=None, help='JSON配置文件（可选，用于设置日志和页码）')
     parser.add_argument('--no-pagenum', action='store_true', help='不添加页码')
+    parser.add_argument(
+        '--mode',
+        choices=['full', 'diagnose', 'punct'],
+        default='full',
+        help=(
+            'full（默认）：标点修正+清洗+完整排版；'
+            'diagnose：仅检测问题，输出诊断报告，不修改文件；'
+            'punct：仅做标点修正，保留原有排版格式'
+        )
+    )
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     args = parser.parse_args()
 
@@ -667,8 +874,70 @@ def main():
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
+    # ===== 处理模式路由（v2.0.0 新增） =====
+    mode = getattr(args, 'mode', 'full')
+
+    if mode == 'diagnose':
+        # 诊断模式：只读文档，输出问题报告，不修改文件
+        logger.info("="*60)
+        logger.info("【诊断模式】仅检测问题，不修改文件")
+        logger.info("="*60)
+        doc = Document(source)
+        issues = []
+        for i, para in enumerate(doc.paragraphs):
+            text = para.text.strip()
+            if not text:
+                continue
+            # 检测标点问题
+            fixed = fix_punctuation_in_text(text)
+            if fixed != text:
+                issues.append(f"  第{i+1}段 [标点问题] {text[:30]}...")
+            # 检测首行缩进缺失
+            pf = para.paragraph_format
+            if pf.first_line_indent is None or pf.first_line_indent == 0:
+                ptype = get_paragraph_type(text)
+                if ptype == 'body':
+                    issues.append(f"  第{i+1}段 [缺首行缩进] {text[:30]}...")
+        logger.info(f"\n共发现 {len(issues)} 个问题：")
+        for iss in issues:
+            logger.info(iss)
+        logger.info("\n【诊断完成】文件未被修改。")
+        return
+
+    if mode == 'punct':
+        # 仅标点模式：只做标点修正，保留所有原有排版
+        logger.info("="*60)
+        logger.info("【标点修正模式】仅修正标点，保留原排版")
+        logger.info("="*60)
+        doc = Document(source)
+        count = fix_punctuation(doc)
+        doc.save(output)
+        logger.info(f"[OK] 标点修正完成，共修正 {count} 处，输出：{output}")
+        return
+
+    # full 模式：先做标点+清洗，再走完整排版流程
+    if mode == 'full':
+        logger.info("[v2.0] 执行标点修正与格式清洗...")
+        doc_pre = Document(source)
+        punct_count = fix_punctuation(doc_pre)
+        clean_count = clean_dirty_format(doc_pre)
+        # 保存为临时文件，再传给 DocumentFormatter
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.docx')
+        os.close(tmp_fd)
+        doc_pre.save(tmp_path)
+        logger.info(f"[OK] 标点修正 {punct_count} 处，格式清洗 {clean_count} 处")
+        source = tmp_path  # 替换 source，后续流程使用清洗后的临时文件
+
     formatter = DocumentFormatter(source, output, add_pagenum=add_pagenum)
     results = formatter.format()
+
+    # 清理 full 模式的临时文件
+    if mode == 'full' and 'tmp_path' in locals():
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
     if results['failed'] > results['success']:
         sys.exit(1)
 
